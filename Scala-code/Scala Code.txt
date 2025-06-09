@@ -1,0 +1,37 @@
+// Import Spark SQL
+import org.apache.spark.sql.SparkSession
+import spark.implicits._
+
+// Read the tab-delimited HDFS output
+val rawDF = spark.read.option("delimiter", "\t").csv("hdfs:///user/kdd/output/*").toDF("protocol", "count")
+
+// Show the loaded data
+rawDF.show()
+// Convert count to integer
+val df = rawDF.withColumn("count", $"count".cast("int"))
+
+// Import MLlib tools
+import org.apache.spark.ml.feature.{StringIndexer, VectorAssembler}
+import org.apache.spark.ml.clustering.KMeans
+
+// Index the protocol string to numeric
+val indexer = new StringIndexer().setInputCol("protocol").setOutputCol("protocolIndex")
+val indexed = indexer.fit(df).transform(df)
+
+// Assemble features: [protocolIndex, count]
+val assembler = new VectorAssembler()
+  .setInputCols(Array("protocolIndex", "count"))
+  .setOutputCol("features")
+
+val featureData = assembler.transform(indexed)
+featureData.select("protocol", "count", "features").show()
+
+
+val kmeans = new KMeans().setK(2).setSeed(1L)  // K=2 assuming normal vs anomaly
+val model = kmeans.fit(featureData)
+
+// Make predictions
+val predictions = model.transform(featureData)
+predictions.select("protocol", "count", "prediction").show()
+
+predictions.groupBy("prediction").count().show()
